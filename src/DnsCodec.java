@@ -20,6 +20,62 @@ public class DnsCodec {
         }
     }
 
+    public static class ResourceRecord {
+        private final String name;
+        private final int type;
+        private final int recordClass;
+        private final long ttl;
+        private final int rdLength;
+        private final int rdataOffset;
+        private final int nextOffset;
+
+        public ResourceRecord (
+                String name,
+                int type,
+                int recordClass,
+                long ttl,
+                int rdLength,
+                int rdataOffset,
+                int nextOffset
+        ) {
+            this.name = name;
+            this.type = type;
+            this.recordClass = recordClass;
+            this.ttl = ttl;
+            this.rdLength = rdLength;
+            this.rdataOffset = rdataOffset;
+            this.nextOffset = nextOffset;
+        }
+
+        public String name() {
+            return name;
+        }
+
+        public int type() {
+            return type;
+        }
+
+        public int recordClass() {
+            return recordClass;
+        }
+
+        public long ttl() {
+            return ttl;
+        }
+
+        public int rdLength() {
+            return rdLength;
+        }
+
+        public int rdataOffset() {
+            return rdataOffset;
+        }
+
+        public int nextOffset() {
+            return nextOffset;
+        }
+    }
+
     public static byte[] encodeAQuery(String hostname, int transactionId) {
         int queryLength = 12 + encodedNameLength(hostname) + 4;
 
@@ -83,6 +139,18 @@ public class DnsCodec {
         int low = packet[offset + 1] & 0xFF;
 
         return (high << 8) | low;
+    }
+
+    public static long readU32(byte[] packet, int offset) {
+        long b1 = packet[offset] & 0xFFL;
+        long b2 = packet[offset + 1] & 0xFFL;
+        long b3 = packet[offset + 2] & 0xFFL;
+        long b4 = packet[offset + 3] & 0xFFL;
+
+        return (b1 << 24)
+                | (b2 << 16)
+                | (b3 << 8)
+                | b4;
     }
 
     public static DecodedName decodeName(byte[] packet, int offset) {
@@ -173,5 +241,41 @@ public class DnsCodec {
         }
 
         return new DecodedName(name.toString(), nextOffset);
+    }
+
+    public static ResourceRecord parseResourceRecord(byte[] packet, int offset) {
+        DecodedName owner = decodeName(packet, offset);
+        offset = owner.nextOffset();
+
+        int type = readU16(packet, offset);
+        offset += 2;
+
+        int recordClass = readU16(packet, offset);
+        offset += 2;
+
+        long ttl = readU32(packet, offset);
+        offset += 4;
+
+        int rdLength = readU16(packet, offset);
+        offset += 2;
+
+        int rdataStart = offset;
+        int nextRecordOffset = rdataStart + rdLength;
+
+        if (nextRecordOffset > packet.length) {
+            throw new IllegalArgumentException(
+                    "DNS RDATA extends beyond packet"
+            );
+        }
+
+        return new ResourceRecord(
+                owner.name(),
+                type,
+                recordClass,
+                ttl,
+                rdLength,
+                rdataStart,
+                nextRecordOffset
+        );
     }
 }

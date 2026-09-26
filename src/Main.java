@@ -52,5 +52,32 @@ public class Main {
 
         System.out.println(decoded.name());
         System.out.println(decoded.nextOffset());
+
+        byte[] test = {
+                0x00,
+                0x00,
+                0x01,
+                0x2C
+        };
+
+        System.out.println(DnsCodec.readU32(test, 0));
+
+        DnsCodec.ResourceRecord rr =
+                DnsCodec.parseResourceRecord(response, 29);
+
+        System.out.println("Owner: " + rr.name());
+        System.out.println("Type: " + rr.type());
+        System.out.println("Class: " + rr.recordClass());
+        System.out.println("TTL: " + rr.ttl());
+        System.out.println("RDLENGTH: " + rr.rdLength());
+        System.out.println("RDATA offset: " + rr.rdataOffset());
+        System.out.println("Next RR offset: " + rr.nextOffset());
+
+        if (rr.type() == 2) {
+            DnsCodec.DecodedName nsTarget =
+                    DnsCodec.decodeName(response, rr.rdataOffset());
+
+            System.out.println("NS target: " + nsTarget.name());
+        }
     }
 }
