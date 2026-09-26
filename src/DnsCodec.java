@@ -55,4 +55,15 @@ public class DnsCodec {
 
         return length;
     }
+
+    public static int readU16(byte[] packet, int offset) {
+        if (offset < 0 || offset + 1 >= packet.length) {
+            throw new IllegalArgumentException("Not enough bytes to read a 16-bit value");
+        }
+
+        int high = packet[offset] & 0xFF;
+        int low = packet[offset + 1] & 0xFF;
+
+        return (high << 8) | low;
+    }
 }
