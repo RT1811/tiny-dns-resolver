@@ -92,6 +92,7 @@ public class DnsCodec {
 
         int cursor = offset;
         int nextOffset = -1;
+        boolean[] visited = new boolean[packet.length];
         StringBuilder name = new StringBuilder();
 
         while (true) {
@@ -118,6 +119,12 @@ public class DnsCodec {
                             "DNS compression pointer outside packet"
                     );
                 }
+
+                if (visited[pointerOffset]) {
+                    throw new IllegalArgumentException("DNS compression pointer loop");
+                }
+
+                visited[pointerOffset] = true;
 
                 if (nextOffset == -1) {
                     nextOffset = cursor + 2;
