@@ -90,34 +90,60 @@ public class DnsCodec {
             throw new IllegalArgumentException("DNS name offset outside packet");
         }
 
+        int cursor = offset;
+        int nextOffset = -1;
         StringBuilder name = new StringBuilder();
 
-        while(true) {
-            if (offset >= packet.length) {
+        while (true) {
+            if (cursor >= packet.length) {
                 throw new IllegalArgumentException("DNS name has no terminator");
             }
 
-            int length = packet[offset] & 0xFF;
+            int length = packet[cursor] & 0xFF;
 
+            if ((length & 0xC0) == 0xC0) {
+                if (cursor + 1 >= packet.length) {
+                    throw new IllegalArgumentException(
+                            "Truncated DNS compression pointer"
+                    );
+                }
+
+                int secondByte = packet[cursor + 1] & 0xFF;
+
+                int pointerOffset =
+                        ((length & 0x3F) << 8) | secondByte;
+
+                if (pointerOffset >= packet.length) {
+                    throw new IllegalArgumentException(
+                            "DNS compression pointer outside packet"
+                    );
+                }
+
+                if (nextOffset == -1) {
+                    nextOffset = cursor + 2;
+                }
+
+                cursor = pointerOffset;
+                continue;
+            }
 
             if (length == 0) {
-                offset++;
+                cursor++;
+
+                if (nextOffset == -1) {
+                    nextOffset = cursor;
+                }
+
                 break;
-            }
-            if ((length & 0xC0) == 0xC0) {
-                throw new IllegalArgumentException(
-                        "Compressed DNS names not supported yet"
-                );
             }
 
             if (length > 63) {
                 throw new IllegalArgumentException("Invalid DNS label length");
             }
 
+            cursor++;
 
-            offset++;
-
-            if (offset + length > packet.length) {
+            if (cursor + length > packet.length) {
                 throw new IllegalArgumentException(
                         "DNS label extends beyond packet"
                 );
@@ -125,7 +151,7 @@ public class DnsCodec {
 
             String label = new String(
                     packet,
-                    offset,
+                    cursor,
                     length,
                     StandardCharsets.US_ASCII
             );
@@ -136,9 +162,9 @@ public class DnsCodec {
 
             name.append(label);
 
-            offset += length;
+            cursor += length;
         }
 
-        return new DecodedName(name.toString(), offset);
+        return new DecodedName(name.toString(), nextOffset);
     }
 }
