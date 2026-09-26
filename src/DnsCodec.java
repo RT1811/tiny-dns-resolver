@@ -2,6 +2,24 @@ import java.nio.charset.StandardCharsets;
 
 public class DnsCodec {
 
+    public static class DecodedName {
+        private final String name;
+        private final int nextOffset;
+
+        public DecodedName(String name, int nextOffset) {
+            this.name = name;
+            this.nextOffset = nextOffset;
+        }
+
+        public String name() {
+            return name;
+        }
+
+        public int nextOffset() {
+            return nextOffset;
+        }
+    }
+
     public static byte[] encodeAQuery(String hostname, int transactionId) {
         int queryLength = 12 + encodedNameLength(hostname) + 4;
 
@@ -65,5 +83,62 @@ public class DnsCodec {
         int low = packet[offset + 1] & 0xFF;
 
         return (high << 8) | low;
+    }
+
+    public static DecodedName decodeName(byte[] packet, int offset) {
+        if (offset < 0 || offset >= packet.length) {
+            throw new IllegalArgumentException("DNS name offset outside packet");
+        }
+
+        StringBuilder name = new StringBuilder();
+
+        while(true) {
+            if (offset >= packet.length) {
+                throw new IllegalArgumentException("DNS name has no terminator");
+            }
+
+            int length = packet[offset] & 0xFF;
+
+
+            if (length == 0) {
+                offset++;
+                break;
+            }
+            if ((length & 0xC0) == 0xC0) {
+                throw new IllegalArgumentException(
+                        "Compressed DNS names not supported yet"
+                );
+            }
+
+            if (length > 63) {
+                throw new IllegalArgumentException("Invalid DNS label length");
+            }
+
+
+            offset++;
+
+            if (offset + length > packet.length) {
+                throw new IllegalArgumentException(
+                        "DNS label extends beyond packet"
+                );
+            }
+
+            String label = new String(
+                    packet,
+                    offset,
+                    length,
+                    StandardCharsets.US_ASCII
+            );
+
+            if (name.length() > 0) {
+                name.append('.');
+            }
+
+            name.append(label);
+
+            offset += length;
+        }
+
+        return new DecodedName(name.toString(), offset);
     }
 }

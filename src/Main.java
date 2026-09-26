@@ -47,5 +47,10 @@ public class Main {
         System.out.println("Is response: " + isResponse);
         System.out.println("Truncated: " + truncated);
         System.out.println("RCODE: " + rcode);
+
+        DnsCodec.DecodedName decoded = DnsCodec.decodeName(response, 12);
+
+        System.out.println(decoded.name());
+        System.out.println(decoded.nextOffset());
     }
 }
