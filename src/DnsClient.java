@@ -11,8 +11,10 @@ public class DnsClient {
 
             socket.setSoTimeout(2000);
 
+            socket.connect(server, 53);
+
             DatagramPacket packet =
-                    new DatagramPacket(query, query.length, server, 53);
+                    new DatagramPacket(query, query.length);
 
             socket.send(packet);
 

@@ -79,6 +79,7 @@ public class DnsCodec {
     }
 
     public static byte[] encodeAQuery(String hostname, int transactionId) {
+        validateHostname(hostname);
         int queryLength = 12 + encodedNameLength(hostname) + 4;
 
         byte[] query = new byte[queryLength];
@@ -363,5 +364,72 @@ public class DnsCodec {
         DecodedName decoded = decodeName(packet, rr.rdataOffset());
 
         return decoded.name();
+    }
+
+    private static void validateHostname(String hostname) {
+        if (hostname == null || hostname.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Invalid DNS name: hostname is empty"
+            );
+        }
+
+        if (hostname.startsWith(".")) {
+            throw new IllegalArgumentException(
+                    "Invalid DNS name: empty label"
+            );
+        }
+
+        if (hostname.contains("..")) {
+            throw new IllegalArgumentException(
+                    "Invalid DNS name: empty label"
+            );
+        }
+
+        String withoutTrailingDot =
+                hostname.endsWith(".")
+                        ? hostname.substring(0, hostname.length() - 1)
+                        : hostname;
+
+        if (withoutTrailingDot.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Invalid DNS name: hostname is empty"
+            );
+        }
+
+        String[] labels = withoutTrailingDot.split("\\.");
+
+        int encodedLength = 1; // final 00 terminator
+
+        for (String label : labels) {
+            for (char c : label.toCharArray()) {
+                if (c > 0x7F) {
+                    throw new IllegalArgumentException(
+                            "Invalid DNS name: non-ASCII character"
+                    );
+                }
+            }
+
+            byte[] bytes = label.getBytes(StandardCharsets.US_ASCII);
+
+            if (label.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Invalid DNS name: empty label"
+                );
+            }
+
+            if (bytes.length > 63) {
+                throw new IllegalArgumentException(
+                        "Invalid DNS name: label exceeds 63 bytes"
+                );
+            }
+
+            encodedLength += 1 + bytes.length;
+        }
+
+        if (encodedLength > 255) {
+            throw new IllegalArgumentException(
+                    "Invalid DNS name: name exceeds 255 bytes"
+            );
+        }
     }
 }

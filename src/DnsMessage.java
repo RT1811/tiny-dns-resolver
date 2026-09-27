@@ -82,6 +82,10 @@ public class DnsMessage {
         return flags & 0x000F;
     }
 
+    public int opcode() {
+        return (flags >> 11) & 0x0F;
+    }
+
     public boolean isAuthoritative() {
         return (flags & 0x0400) != 0;
     }

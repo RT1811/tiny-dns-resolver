@@ -1,9 +1,6 @@
 import java.io.IOException;
 import java.net.InetAddress;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class IterativeResolver {
 
@@ -31,12 +28,13 @@ public class IterativeResolver {
     private static class LookupContext {
         int queriesRemaining = 40;
         final Set<String> activeLookups = new HashSet<>();
+        final long deadlineNanos = System.nanoTime() + 30_000_000_000L;
     }
 
     public List<String> resolveA(String hostname) throws IOException {
         LookupContext context = new LookupContext();
 
-        return resolveA(hostname, context, 0);
+        return resolveA(normalizeName(hostname), context, 0);
     }
 
     private List<String> resolveA(String hostname,
@@ -63,6 +61,9 @@ public class IterativeResolver {
 
             InetAddress currentServer = rootServer;
 
+            String currentDelegation = null;
+            String selectedDelegation = null;
+
             for (int hop = 0; hop < 10; hop++) {
                 byte[] query = DnsCodec.encodeAQuery(currentName, 0x1234);
 
@@ -72,6 +73,12 @@ public class IterativeResolver {
                                 + " for "
                                 + currentName
                 );
+
+                if (System.nanoTime() >= context.deadlineNanos) {
+                    throw new IllegalStateException(
+                            "DNS lookup deadline exceeded"
+                    );
+                }
 
                 if (context.queriesRemaining <= 0) {
                     throw new IllegalStateException(
@@ -85,9 +92,23 @@ public class IterativeResolver {
 
                 DnsMessage message = DnsCodec.parseMessage(response);
 
+                int expectedId = DnsCodec.readU16(query, 0);
+
+                if (message.id() != expectedId) {
+                    throw new IllegalStateException(
+                            "DNS transaction ID mismatch"
+                    );
+                }
+
                 if (!message.isResponse()) {
                     throw new IllegalStateException(
                             "Received packet is not a DNS response"
+                    );
+                }
+
+                if (message.opcode() != 0) {
+                    throw new IllegalStateException(
+                            "Unsupported DNS opcode " + message.opcode()
                     );
                 }
 
@@ -97,11 +118,26 @@ public class IterativeResolver {
                     );
                 }
 
-                if (message.rcode() != 0) {
+                if (message.rcode() == 3) {
                     throw new IllegalStateException(
-                            "DNS server returned RCODE " + message.rcode()
+                            "NXDOMAIN: " + currentName + " does not exist"
                     );
                 }
+
+                if (message.rcode() == 2) {
+                    throw new IllegalStateException(
+                            "SERVFAIL while resolving " + currentName
+                    );
+                }
+
+                if (message.rcode() != 0) {
+                    throw new IllegalStateException(
+                            "DNS server returned unsupported RCODE "
+                                    + message.rcode()
+                    );
+                }
+
+                validateEchoedQuestion(response, message, currentName);
 
                 String answerName = currentName;
 
@@ -111,7 +147,7 @@ public class IterativeResolver {
                     for (DnsCodec.ResourceRecord rr : message.answers()) {
                         if (rr.type() == 1
                                 && rr.recordClass() == 1
-                                && rr.name().equalsIgnoreCase(answerName)) {
+                                && normalizeName(rr.name()).equals(normalizeName(answerName))) {
 
                             addresses.add(
                                     DnsCodec.decodeARecord(response, rr)
@@ -128,7 +164,7 @@ public class IterativeResolver {
                     for (DnsCodec.ResourceRecord rr : message.answers()) {
                         if (rr.type() == 5
                                 && rr.recordClass() == 1
-                                && rr.name().equalsIgnoreCase(answerName)) {
+                                && normalizeName(rr.name()).equals(normalizeName(answerName))) {
 
                             cnameTarget =
                                     DnsCodec.decodeNameRecord(response, rr);
@@ -156,10 +192,21 @@ public class IterativeResolver {
                     answerName = cnameTarget;
                 }
 
-                if (!answerName.equalsIgnoreCase(currentName)) {
+                if (!normalizeName(answerName).equals(normalizeName(currentName))) {
                     currentName = answerName;
                     currentServer = rootServer;
+
+                    currentDelegation = null;
+                    selectedDelegation = null;
+
                     continue;
+                }
+
+                if (message.isAuthoritative()) {
+                    throw new IllegalStateException(
+                            "Authoritative response contains no A record for "
+                                    + currentName
+                    );
                 }
 
                 InetAddress nextServer = null;
@@ -171,6 +218,14 @@ public class IterativeResolver {
                     }
 
                     String delegation = nsRecord.name();
+
+                    if (currentDelegation != null
+                            && !isStrictSubdomain(
+                            delegation,
+                            currentDelegation
+                    )) {
+                        continue;
+                    }
 
                     if (!isSameOrSubdomain(currentName, delegation)) {
                         continue;
@@ -186,12 +241,13 @@ public class IterativeResolver {
                     for (DnsCodec.ResourceRecord additional : message.additionals()) {
                         if (additional.type() == 1
                                 && additional.recordClass() == 1
-                                && additional.name().equalsIgnoreCase(nsHostname)) {
+                                && normalizeName(additional.name()).equals(normalizeName(nsHostname))) {
 
                             String glueIp =
                                     DnsCodec.decodeARecord(response, additional);
 
                             nextServer = ipv4Address(glueIp);
+                            selectedDelegation = delegation;
 
                             System.out.println(
                                     "Using glue: "
@@ -218,6 +274,14 @@ public class IterativeResolver {
 
                         String delegation = nsRecord.name();
 
+                        if (currentDelegation != null
+                                && !isStrictSubdomain(
+                                delegation,
+                                currentDelegation
+                        )) {
+                            continue;
+                        }
+
                         if (!isSameOrSubdomain(currentName, delegation)) {
                             continue;
                         }
@@ -240,6 +304,7 @@ public class IterativeResolver {
                             if (!nsAddresses.isEmpty()) {
                                 nextServer =
                                         ipv4Address(nsAddresses.get(0));
+                                selectedDelegation = delegation;
 
                                 System.out.println(
                                         "Resolved NS address: "
@@ -251,9 +316,17 @@ public class IterativeResolver {
                                 break;
                             }
                         }  catch (IllegalStateException e) {
-                            if ("DNS query budget exhausted".equals(e.getMessage())) {
+                            if ("DNS query budget exhausted".equals(e.getMessage())
+                                    || "DNS lookup deadline exceeded".equals(e.getMessage())) {
                                 throw e;
                             }
+
+                            System.out.println(
+                                    "Could not resolve nameserver "
+                                            + nsHostname
+                                            + ": "
+                                            + e.getMessage()
+                            );
 
                             System.out.println(
                                     "Could not resolve nameserver "
@@ -274,10 +347,11 @@ public class IterativeResolver {
 
                 if (nextServer == null) {
                     throw new IllegalStateException(
-                            "Referral contains no usable IPv4 glue"
+                            "Referral contains no usable IPv4 nameserver"
                     );
                 }
 
+                currentDelegation = selectedDelegation;
                 currentServer = nextServer;
             }
 
@@ -290,10 +364,19 @@ public class IterativeResolver {
     }
 
     private static boolean isSameOrSubdomain(String name, String zone) {
-        String n = name.toLowerCase();
-        String z = zone.toLowerCase();
+        String n = normalizeName(name);
+        String z = normalizeName(zone);
+
 
         return n.equals(z) || n.endsWith("." + z);
+    }
+
+    private static boolean isStrictSubdomain(String name, String parent) {
+        String n = normalizeName(name);
+        String p = normalizeName(parent);
+
+        return !n.equals(p)
+                && n.endsWith("." + p);
     }
 
     private static InetAddress ipv4Address(String ip) throws IOException {
@@ -306,5 +389,55 @@ public class IterativeResolver {
                         (byte) Integer.parseInt(ipv4[3])
                 }
         );
+    }
+
+    private static void validateEchoedQuestion(
+            byte[] response,
+            DnsMessage message,
+            String expectedName
+    ) {
+        if (message.qdCount() != 1) {
+            throw new IllegalStateException(
+                    "DNS response has unexpected question count"
+            );
+        }
+
+        DnsCodec.DecodedName questionName =
+                DnsCodec.decodeName(response, 12);
+
+        if (!questionName.name().equalsIgnoreCase(expectedName)) {
+            throw new IllegalStateException(
+                    "DNS response echoed the wrong hostname"
+            );
+        }
+
+        int offset = questionName.nextOffset();
+
+        int qtype = DnsCodec.readU16(response, offset);
+        offset += 2;
+
+        int qclass = DnsCodec.readU16(response, offset);
+
+        if (qtype != 1) {
+            throw new IllegalStateException(
+                    "DNS response echoed the wrong query type"
+            );
+        }
+
+        if (qclass != 1) {
+            throw new IllegalStateException(
+                    "DNS response echoed the wrong query class"
+            );
+        }
+    }
+
+    private static String normalizeName(String name) {
+        String normalized = name.toLowerCase(Locale.ROOT);
+
+        if (normalized.endsWith(".")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+
+        return normalized;
     }
 }
