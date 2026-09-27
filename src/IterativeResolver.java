@@ -12,11 +12,20 @@ public class IterativeResolver {
     }
 
     public List<String> resolveA(String hostname) throws IOException {
-        byte[] query = DnsCodec.encodeAQuery(hostname, 0x1234);
+        String currentName = hostname;
+        int cnameTransitions = 0;
 
         InetAddress currentServer = rootServer;
 
         for (int hop = 0; hop < 10; hop++) {
+            byte[] query = DnsCodec.encodeAQuery(currentName, 0x1234);
+
+            System.out.println(
+                    "Querying "
+                            + currentServer.getHostAddress()
+                            + " for "
+                            + currentName
+            );
 
             byte[] response =
                     DnsClient.exchange(query, currentServer);
@@ -43,28 +52,63 @@ public class IterativeResolver {
                 );
             }
 
-            System.out.println(
-                    "Querying "
-                            + currentServer.getHostAddress()
-                            + " for "
-                            + hostname
-            );
+            String answerName = currentName;
 
-            List<String> addresses = new ArrayList<>();
+            while (true) {
+                List<String> addresses = new ArrayList<>();
 
-            for (DnsCodec.ResourceRecord rr : message.answers()) {
-                if (rr.type() == 1
-                        && rr.recordClass() == 1
-                        && rr.name().equalsIgnoreCase(hostname)) {
+                for (DnsCodec.ResourceRecord rr : message.answers()) {
+                    if (rr.type() == 1
+                            && rr.recordClass() == 1
+                            && rr.name().equalsIgnoreCase(answerName)) {
 
-                    addresses.add(
-                            DnsCodec.decodeARecord(response, rr)
+                        addresses.add(
+                                DnsCodec.decodeARecord(response, rr)
+                        );
+                    }
+                }
+
+                if (!addresses.isEmpty()) {
+                    return addresses;
+                }
+
+                String cnameTarget = null;
+
+                for (DnsCodec.ResourceRecord rr : message.answers()) {
+                    if (rr.type() == 5
+                            && rr.recordClass() == 1
+                            && rr.name().equalsIgnoreCase(answerName)) {
+
+                        cnameTarget =
+                                DnsCodec.decodeNameRecord(response, rr);
+
+                        break;
+                    }
+                }
+
+                if (cnameTarget == null) {
+                    break;
+                }
+
+                cnameTransitions++;
+
+                if (cnameTransitions > 8) {
+                    throw new IllegalStateException(
+                            "CNAME chain exceeded limit"
                     );
                 }
+
+                System.out.println(
+                        "CNAME: " + answerName + " -> " + cnameTarget
+                );
+
+                answerName = cnameTarget;
             }
 
-            if (!addresses.isEmpty()) {
-                return addresses;
+            if (!answerName.equalsIgnoreCase(currentName)) {
+                currentName = answerName;
+                currentServer = rootServer;
+                continue;
             }
 
             InetAddress nextServer = null;
@@ -77,7 +121,7 @@ public class IterativeResolver {
 
                 String delegation = nsRecord.name();
 
-                if (!isSameOrSubdomain(hostname, delegation)) {
+                if (!isSameOrSubdomain(currentName, delegation)) {
                     continue;
                 }
 
@@ -87,7 +131,7 @@ public class IterativeResolver {
                                 nsRecord.rdataOffset()
                         );
 
-                String nsHostname = target.name();
+                String nsHostname =  DnsCodec.decodeNameRecord(response, nsRecord);
 
                 if (!isSameOrSubdomain(nsHostname, delegation)) {
                     continue;

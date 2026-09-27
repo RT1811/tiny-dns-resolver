@@ -358,4 +358,10 @@ public class DnsCodec {
                 additionals
         );
     }
+
+    public static String decodeNameRecord(byte[] packet, ResourceRecord rr) {
+        DecodedName decoded = decodeName(packet, rr.rdataOffset());
+
+        return decoded.name();
+    }
 }
