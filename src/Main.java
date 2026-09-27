@@ -21,63 +21,16 @@ public class Main {
 
         System.out.println("Received " + response.length + " bytes");
 
-        for (int i = 0; i < 12; i++) {
-            System.out.printf("%02X ", response[i] & 0xFF);
-        }
-        System.out.println();
+        DnsMessage message = DnsCodec.parseMessage(response);
 
-        int id = DnsCodec.readU16(response,0);
-        int flags   = DnsCodec.readU16(response, 2);
-        int qdCount = DnsCodec.readU16(response, 4);
-        int anCount = DnsCodec.readU16(response, 6);
-        int nsCount = DnsCodec.readU16(response, 8);
-        int arCount = DnsCodec.readU16(response, 10);
+        System.out.println("ID: " + message.id());
+        System.out.println("Flags: " + message.flags());
+        System.out.println("Answers: " + message.answers().size());
+        System.out.println("Authorities: " + message.authorities().size());
+        System.out.println("Additionals: " + message.additionals().size());
 
-        System.out.println("ID = " + id);
-        System.out.println("Flags = " + flags);
-        System.out.println("qdCount = " + qdCount);
-        System.out.println("anCount = " + anCount);
-        System.out.println("nsCount = " + nsCount);
-        System.out.println("arCount = " + arCount);
+        DnsCodec.ResourceRecord rr = message.authorities().get(0);
 
-        boolean isResponse = (flags & 0x8000) != 0;
-        boolean truncated = (flags & 0x0200) != 0;
-        int rcode = flags & 0x000F;
-
-        System.out.println("Is response: " + isResponse);
-        System.out.println("Truncated: " + truncated);
-        System.out.println("RCODE: " + rcode);
-
-        DnsCodec.DecodedName decoded = DnsCodec.decodeName(response, 12);
-
-        System.out.println(decoded.name());
-        System.out.println(decoded.nextOffset());
-
-        byte[] test = {
-                0x00,
-                0x00,
-                0x01,
-                0x2C
-        };
-
-        System.out.println(DnsCodec.readU32(test, 0));
-
-        DnsCodec.ResourceRecord rr =
-                DnsCodec.parseResourceRecord(response, 29);
-
-        System.out.println("Owner: " + rr.name());
-        System.out.println("Type: " + rr.type());
-        System.out.println("Class: " + rr.recordClass());
-        System.out.println("TTL: " + rr.ttl());
-        System.out.println("RDLENGTH: " + rr.rdLength());
-        System.out.println("RDATA offset: " + rr.rdataOffset());
-        System.out.println("Next RR offset: " + rr.nextOffset());
-
-        if (rr.type() == 2) {
-            DnsCodec.DecodedName nsTarget =
-                    DnsCodec.decodeName(response, rr.rdataOffset());
-
-            System.out.println("NS target: " + nsTarget.name());
-        }
+        System.out.println(rr.name() + " type=" + rr.type());
     }
 }

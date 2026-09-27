@@ -1,4 +1,6 @@
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 public class DnsCodec {
 
@@ -276,6 +278,84 @@ public class DnsCodec {
                 rdLength,
                 rdataStart,
                 nextRecordOffset
+        );
+    }
+
+    public static String decodeARecord(byte[] packet, ResourceRecord rr) {
+        if (rr.type() != 1) {
+            throw new IllegalArgumentException("Not an A record");
+        }
+
+        if (rr.rdLength() != 4) {
+            throw new IllegalArgumentException("Invalid A record length");
+        }
+
+        int offset = rr.rdataOffset();
+        int a = packet[offset] & 0xFF;
+        int b = packet[offset + 1] & 0xFF;
+        int c = packet[offset + 2] & 0xFF;
+        int d = packet[offset + 3] & 0xFF;
+
+        return a + "." + b + "." + c + "." + d;
+    }
+
+    public static DnsMessage parseMessage(byte[] packet) {
+        List<ResourceRecord> answers = new ArrayList<>();
+        List<ResourceRecord> authorities = new ArrayList<>();
+        List<ResourceRecord> additionals = new ArrayList<>();
+
+        int id = readU16(packet, 0);
+        int flags = readU16(packet, 2);
+        int qdCount = readU16(packet, 4);
+        int anCount = readU16(packet, 6);
+        int nsCount = readU16(packet, 8);
+        int arCount = readU16(packet, 10);
+
+        DnsCodec.DecodedName decoded = DnsCodec.decodeName(packet, 12);
+
+        int offset = 12;
+
+        for (int i = 0; i < qdCount; i++) {
+            DecodedName question = decodeName(packet, offset);
+            offset = question.nextOffset();
+
+            if (offset + 4 > packet.length) {
+                throw new IllegalArgumentException(
+                        "DNS question extends beyond packet"
+                );
+            }
+
+            offset += 4; // QTYPE + QCLASS
+        }
+
+        for (int i = 0; i < anCount; i++) {
+            ResourceRecord rr = parseResourceRecord(packet, offset);
+            answers.add(rr);
+            offset = rr.nextOffset();
+        }
+
+        for (int i = 0; i < nsCount; i++) {
+            ResourceRecord rr = parseResourceRecord(packet, offset);
+            authorities.add(rr);
+            offset = rr.nextOffset();
+        }
+
+        for (int i = 0; i < arCount; i++) {
+            ResourceRecord rr = parseResourceRecord(packet, offset);
+            additionals.add(rr);
+            offset = rr.nextOffset();
+        }
+
+        return new DnsMessage(
+                id,
+                flags,
+                qdCount,
+                anCount,
+                nsCount,
+                arCount,
+                answers,
+                authorities,
+                additionals
         );
     }
 }
