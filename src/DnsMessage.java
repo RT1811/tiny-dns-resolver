@@ -69,4 +69,20 @@ public class DnsMessage {
     public List<DnsCodec.ResourceRecord> additionals() {
         return additionals;
     }
+
+    public boolean isResponse() {
+        return (flags & 0x8000) != 0;
+    }
+
+    public boolean isTruncated() {
+        return (flags & 0x0200) != 0;
+    }
+
+    public int rcode() {
+        return flags & 0x000F;
+    }
+
+    public boolean isAuthoritative() {
+        return (flags & 0x0400) != 0;
+    }
 }
