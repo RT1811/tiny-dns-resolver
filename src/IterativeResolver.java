@@ -60,9 +60,9 @@ public class IterativeResolver {
             int cnameTransitions = 0;
 
             InetAddress currentServer = rootServer;
+            InetAddress alternateServer = null;
 
             String currentDelegation = null;
-            String selectedDelegation = null;
 
             for (int hop = 0; hop < 10; hop++) {
                 byte[] query = DnsCodec.encodeAQuery(currentName, 0x1234);
@@ -88,7 +88,28 @@ public class IterativeResolver {
 
                 context.queriesRemaining--;
 
-                byte[] response = exchange.exchange(query, currentServer);
+                byte[] response;
+
+                try {
+                    response = exchange.exchange(query, currentServer);
+
+                } catch (IOException e) {
+                    if (alternateServer == null) {
+                        throw e;
+                    }
+
+                    System.out.println(
+                            "Nameserver "
+                                    + currentServer.getHostAddress()
+                                    + " failed; trying "
+                                    + alternateServer.getHostAddress()
+                    );
+
+                    currentServer = alternateServer;
+                    alternateServer = null;
+
+                    continue;
+                }
 
                 DnsMessage message = DnsCodec.parseMessage(response);
 
@@ -195,9 +216,9 @@ public class IterativeResolver {
                 if (!normalizeName(answerName).equals(normalizeName(currentName))) {
                     currentName = answerName;
                     currentServer = rootServer;
+                    alternateServer = null;
 
                     currentDelegation = null;
-                    selectedDelegation = null;
 
                     continue;
                 }
@@ -210,6 +231,8 @@ public class IterativeResolver {
                 }
 
                 InetAddress nextServer = null;
+                InetAddress nextAlternateServer = null;
+                String selectedDelegation = null;
 
                 for (DnsCodec.ResourceRecord nsRecord : message.authorities()) {
                     if (nsRecord.type() != 2
@@ -243,11 +266,34 @@ public class IterativeResolver {
                                 && additional.recordClass() == 1
                                 && normalizeName(additional.name()).equals(normalizeName(nsHostname))) {
 
-                            String glueIp =
-                                    DnsCodec.decodeARecord(response, additional);
+                            String glueIp = DnsCodec.decodeARecord(response, additional);
 
-                            nextServer = ipv4Address(glueIp);
-                            selectedDelegation = delegation;
+                            InetAddress candidate = ipv4Address(glueIp);
+
+                            if (nextServer == null) {
+                                nextServer = candidate;
+                                selectedDelegation = delegation;
+
+                                System.out.println(
+                                        "Using glue: "
+                                                + nsHostname
+                                                + " -> "
+                                                + glueIp
+                                );
+
+                            } else if (normalizeName(delegation)
+                                    .equals(normalizeName(selectedDelegation))
+                                    && !candidate.equals(nextServer)) {
+
+                                nextAlternateServer = candidate;
+
+                                System.out.println(
+                                        "Using alternate glue: "
+                                                + nsHostname
+                                                + " -> "
+                                                + glueIp
+                                );
+                            }
 
                             System.out.println(
                                     "Using glue: "
@@ -260,7 +306,7 @@ public class IterativeResolver {
                         }
                     }
 
-                    if (nextServer != null) {
+                    if (nextAlternateServer != null) {
                         break;
                     }
                 }
@@ -302,18 +348,37 @@ public class IterativeResolver {
                                     );
 
                             if (!nsAddresses.isEmpty()) {
-                                nextServer =
+                                InetAddress candidate =
                                         ipv4Address(nsAddresses.get(0));
-                                selectedDelegation = delegation;
 
-                                System.out.println(
-                                        "Resolved NS address: "
-                                                + nsHostname
-                                                + " -> "
-                                                + nsAddresses.get(0)
-                                );
+                                if (nextServer == null) {
+                                    nextServer = candidate;
+                                    selectedDelegation = delegation;
 
-                                break;
+                                    System.out.println(
+                                            "Resolved NS address: "
+                                                    + nsHostname
+                                                    + " -> "
+                                                    + nsAddresses.get(0)
+                                    );
+
+                                } else if (normalizeName(delegation)
+                                        .equals(normalizeName(selectedDelegation))
+                                        && !candidate.equals(nextServer)) {
+
+                                    nextAlternateServer = candidate;
+
+                                    System.out.println(
+                                            "Resolved alternate NS address: "
+                                                    + nsHostname
+                                                    + " -> "
+                                                    + nsAddresses.get(0)
+                                    );
+                                }
+
+                                if (nextAlternateServer != null) {
+                                    break;
+                                }
                             }
                         }  catch (IllegalStateException e) {
                             if ("DNS query budget exhausted".equals(e.getMessage())
@@ -353,6 +418,7 @@ public class IterativeResolver {
 
                 currentDelegation = selectedDelegation;
                 currentServer = nextServer;
+                alternateServer = nextAlternateServer;
             }
 
             throw new IllegalStateException(

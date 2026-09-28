@@ -363,6 +363,15 @@ public class DnsCodec {
     public static String decodeNameRecord(byte[] packet, ResourceRecord rr) {
         DecodedName decoded = decodeName(packet, rr.rdataOffset());
 
+
+        int expectedEnd = rr.rdataOffset() + rr.rdLength();
+
+        if (decoded.nextOffset() != expectedEnd) {
+            throw new IllegalArgumentException(
+                    "DNS name RDATA length mismatch"
+            );
+        }
+
         return decoded.name();
     }
 

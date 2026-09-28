@@ -14,6 +14,7 @@ public class ResolverFixtureTest {
         testMissingGlueResolution();
         testRepeatedReferralRejected();
         testCnameLoopRejected();
+        testNameserverFallback();
     }
 
     private static void writeU16(ByteArrayOutputStream out, int value) {
@@ -285,6 +286,85 @@ public class ResolverFixtureTest {
         packet[16] = 'l';
 
         return packet;
+    }
+
+    private static byte[] referralWithTwoGlue() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        // Header
+        writeU16(out, 0x1234); // ID
+        writeU16(out, 0x8000); // QR = response
+        writeU16(out, 1);      // QDCOUNT
+        writeU16(out, 0);      // ANCOUNT
+        writeU16(out, 2);      // NSCOUNT
+        writeU16(out, 2);      // ARCOUNT
+
+        // Question: host.example.com A IN
+        writeName(out, "host.example.com");
+        writeU16(out, 1);
+        writeU16(out, 1);
+
+        // Authority 1:
+        // example.com NS ns1.example.com
+        writeName(out, "example.com");
+        writeU16(out, 2);  // NS
+        writeU16(out, 1);  // IN
+        writeU32(out, 60);
+
+        ByteArrayOutputStream ns1Rdata =
+                new ByteArrayOutputStream();
+
+        writeName(ns1Rdata, "ns1.example.com");
+
+        byte[] ns1Bytes = ns1Rdata.toByteArray();
+
+        writeU16(out, ns1Bytes.length);
+        out.writeBytes(ns1Bytes);
+
+        // Authority 2:
+        // example.com NS ns2.example.com
+        writeName(out, "example.com");
+        writeU16(out, 2);
+        writeU16(out, 1);
+        writeU32(out, 60);
+
+        ByteArrayOutputStream ns2Rdata =
+                new ByteArrayOutputStream();
+
+        writeName(ns2Rdata, "ns2.example.com");
+
+        byte[] ns2Bytes = ns2Rdata.toByteArray();
+
+        writeU16(out, ns2Bytes.length);
+        out.writeBytes(ns2Bytes);
+
+        // Additional:
+        // ns1.example.com A 192.0.2.10
+        writeName(out, "ns1.example.com");
+        writeU16(out, 1);
+        writeU16(out, 1);
+        writeU32(out, 60);
+        writeU16(out, 4);
+
+        out.write(192);
+        out.write(0);
+        out.write(2);
+        out.write(10);
+
+        // Additional:
+        // ns2.example.com A 192.0.2.11
+        writeName(out, "ns2.example.com");
+        writeU16(out, 1);
+        writeU16(out, 1);
+        writeU32(out, 60);
+        writeU16(out, 4);
+
+        out.write(192);
+        out.write(0);
+        out.write(2);
+        out.write(11);
+
+        return out.toByteArray();
     }
 
     private static InetAddress rootServer() throws Exception {
@@ -564,6 +644,73 @@ public class ResolverFixtureTest {
         } catch (IllegalStateException e) {
             System.out.println(
                     "PASS: " + e.getMessage()
+            );
+        }
+    }
+
+    private static void testNameserverFallback()
+            throws Exception {
+
+        System.out.println("\n=== Nameserver fallback ===");
+
+        InetAddress root = rootServer();
+
+        IterativeResolver.DnsExchange exchange =
+                (query, server) -> {
+
+                    String queryName =
+                            DnsCodec.decodeName(query, 12).name();
+
+                    if (server.equals(root)
+                            && queryName.equalsIgnoreCase(
+                            "host.example.com"
+                    )) {
+
+                        return referralWithTwoGlue();
+                    }
+
+                    if (server.getHostAddress().equals("192.0.2.10")
+                            && queryName.equalsIgnoreCase(
+                            "host.example.com"
+                    )) {
+
+                        throw new IOException(
+                                "Simulated primary nameserver failure"
+                        );
+                    }
+
+                    if (server.getHostAddress().equals("192.0.2.11")
+                            && queryName.equalsIgnoreCase(
+                            "host.example.com"
+                    )) {
+
+                        return finalHostAnswer();
+                    }
+
+                    throw new IOException(
+                            "Unexpected scripted query: "
+                                    + queryName
+                                    + " to "
+                                    + server.getHostAddress()
+                    );
+                };
+
+        IterativeResolver resolver =
+                new IterativeResolver(root, exchange);
+
+        List<String> addresses =
+                resolver.resolveA("host.example.com");
+
+        if (addresses.size() == 1
+                && addresses.get(0).equals("203.0.113.7")) {
+
+            System.out.println(
+                    "PASS: fallback resolved to 203.0.113.7"
+            );
+
+        } else {
+            System.out.println(
+                    "FAIL: unexpected result " + addresses
             );
         }
     }
