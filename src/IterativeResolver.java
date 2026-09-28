@@ -295,13 +295,6 @@ public class IterativeResolver {
                                 );
                             }
 
-                            System.out.println(
-                                    "Using glue: "
-                                            + nsHostname
-                                            + " -> "
-                                            + glueIp
-                            );
-
                             break;
                         }
                     }
@@ -385,13 +378,6 @@ public class IterativeResolver {
                                     || "DNS lookup deadline exceeded".equals(e.getMessage())) {
                                 throw e;
                             }
-
-                            System.out.println(
-                                    "Could not resolve nameserver "
-                                            + nsHostname
-                                            + ": "
-                                            + e.getMessage()
-                            );
 
                             System.out.println(
                                     "Could not resolve nameserver "

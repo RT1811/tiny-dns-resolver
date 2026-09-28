@@ -16,7 +16,7 @@ public class Main {
 
         IterativeResolver resolver = new IterativeResolver(rootServer);
 
-        List<String> addresses = resolver.resolveA("www.ubc.ca");
+        List<String> addresses = resolver.resolveA("iana.org");
 
         System.out.println("Resolved addresses:");
 
