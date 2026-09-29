@@ -448,3 +448,5 @@ Building a small resolver directly exposed several details that are easy to miss
 - Correct termination behavior is as important as the happy path.
 
 The goal of the project is not to replace a production recursive resolver, but to make the mechanics of iterative DNS resolution concrete by implementing them directly.
+
+<img width="4152" height="5938" alt="diagram" src="https://github.com/user-attachments/assets/7c9d6523-926d-48bd-80d8-df337d90ee47" />
